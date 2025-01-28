@@ -33,7 +33,12 @@ class NewsListCollectionViewCell: UICollectionViewCell {
     
     private var constraintSize: CGFloat {
         get {
-            contentView.frame.height <= 100 ? 8 : 16
+            switch (Constants.Device.type, Constants.Device.orientation) {
+            case (.pad, .portrait):
+                16
+            default:
+                8
+            }
         }
     }
     
@@ -49,8 +54,9 @@ class NewsListCollectionViewCell: UICollectionViewCell {
     private func setupViews() {
         contentView.addSubview(imageView)
         contentView.addSubview(titleLabel)
+        self.backgroundColor = .systemGray6
         
-        self.layer.cornerRadius = 8
+        self.layer.cornerRadius = constraintSize / 2
 
         NSLayoutConstraint.activate([
             imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: constraintSize),

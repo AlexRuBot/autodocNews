@@ -11,15 +11,25 @@ import Combine
 final class NewsAPI: BaseAPI {
     
     private let baseURL = URL(string: Constants.URL.API.news)!
-    private let pageSize = 10
+    private let pageSize: Int = {
+        switch Constants.Device.type {
+        case .pad:
+            return 20
+        case .phone:
+            return 10
+        default:
+            return 0
+        }
+    }()
         
-    func fetchNews(page: Int) -> AnyPublisher<APINewsList, APIError> {
+    func fetchNews(page: Int) async throws-> APINewsList {
         let endpoint = "\(baseURL)/\(page)/\(pageSize)"
-        return request(endpoint: endpoint)
+                
+        return try await request(endpoint: endpoint)
     }
     
-    func fetchImage(url: String) -> AnyPublisher<Data, APIError> {
-        return downloadImageWithCash(from: url)
+    func fetchImage(url: String) async throws-> Data {
+        return try await downloadImage(from: url)
     }
 }
     

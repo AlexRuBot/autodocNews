@@ -4,6 +4,7 @@
 //
 //  Created by Александр Гужавин on 17.01.2025.
 //
+import UIKit
 
 enum Constants {
     enum URL {
@@ -16,5 +17,10 @@ enum Constants {
     enum NavigationTitle {
         static let newsList = "Новости"
         static let newsDetails = "Новость"
+    }
+    
+    enum Device {
+        static let orientation = UIDevice.current.orientation
+        static let type = UIDevice.current.userInterfaceIdiom
     }
 }

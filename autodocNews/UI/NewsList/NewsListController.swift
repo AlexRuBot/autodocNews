@@ -11,31 +11,36 @@ import Combine
 // MARK: Life Circle & UI
 
 class NewsListController: UIViewController {
-    
-    
     private var collectionView: UICollectionView!
-    
     private var viewModel: NewsListViewModel!
     private var cancellables = Set<AnyCancellable>()
+    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
     private var isLoading = false
-    
+
     override func viewDidLoad() {
         super.viewDidLoad()
         navigationItem.title = Constants.NavigationTitle.newsList
         navigationController?.navigationBar.backgroundColor = .systemBackground
         self.viewModel = NewsListViewModel()
-        configureCollectionView()
         
-        viewModel.$news.sink { [weak self] _ in
+        configureCollectionView()
+        configureDataSource()
+        
+        viewModel.$news.sink { [weak self] news in
             self?.isLoading = false
-            DispatchQueue.main.async {
-                self?.collectionView.reloadData()
-            }
+            self?.applySnapshot(news: news)
         }.store(in: &cancellables)
         
         isLoading = true
-        collectionView.reloadData()
-        viewModel.fetchNews()
+        applySnapshot(news: [])
+        Task {
+            do {
+                try await viewModel.fetchNews()
+            } catch {
+                isLoading = false
+                print("Error fetching news: \(error)")
+            }
+        }
     }
     
     private func configureCollectionView() {
@@ -46,11 +51,11 @@ class NewsListController: UIViewController {
         collectionView.backgroundColor = .systemBackground
         collectionView.isUserInteractionEnabled = true
         collectionView.allowsSelection = true
-            
+        collectionView.delegate = self
+
         collectionView.register(NewsListCollectionViewCell.self, forCellWithReuseIdentifier: NewsListCollectionViewCell.indentifier)
         collectionView.register(LoadingCollectionViewCell.self, forCellWithReuseIdentifier: LoadingCollectionViewCell.indentifier)
-        collectionView.delegate = self
-        collectionView.dataSource = self
+        
         view.addSubview(collectionView)
     }
 
@@ -61,56 +66,97 @@ class NewsListController: UIViewController {
     }
 
     private func createSection() -> NSCollectionLayoutSection {
-        let heightView = view.frame.height
-        let itemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(heightView / 8))
-        let item = NSCollectionLayoutItem(layoutSize: itemSize)
+        let heightDimension = view.frame.height / 8
+        var fractionalWidth = CGFloat(1.0)
         
-        item.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
-            
-        let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(heightView / 8))
-        let group = NSCollectionLayoutGroup.vertical(layoutSize: groupSize, subitems: [item])
+        switch Constants.Device.type {
+        case .pad:
+            fractionalWidth = 0.5
+        case .phone:
+            fractionalWidth = 1.0
+        default:
+            break
+        }
+
+        let itemSizeNews = NSCollectionLayoutSize(widthDimension: .fractionalWidth(fractionalWidth), heightDimension: .absolute(heightDimension))
+        let itemNews = NSCollectionLayoutItem(layoutSize: itemSizeNews)
+        itemNews.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
+
+        
+        let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(heightDimension))
+        let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: [itemNews])
         let section = NSCollectionLayoutSection(group: group)
 
         return section
     }
-}
 
-// MARK: CollectionView Delegate
-
-extension NewsListController: UICollectionViewDelegate, UICollectionViewDataSource {
-    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        viewModel.news.count + (isLoading ? 1 : 0)
+    private func configureDataSource() {
+        dataSource = UICollectionViewDiffableDataSource<Section, Item>(collectionView: collectionView) { collectionView, indexPath, item in
+            switch item {
+            case .news(let news):
+                let cell = collectionView.dequeueReusableCell(withReuseIdentifier: NewsListCollectionViewCell.indentifier, for: indexPath) as! NewsListCollectionViewCell
+                cell.configure(news: news)
+                return cell
+            case .loading:
+                let cell = collectionView.dequeueReusableCell(withReuseIdentifier: LoadingCollectionViewCell.indentifier, for: indexPath) as! LoadingCollectionViewCell
+                cell.startLoading()
+                return cell
+            }
+        }
     }
-    
-    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        if isLoading && indexPath.item == viewModel.news.count {
-            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: LoadingCollectionViewCell.indentifier, for: indexPath) as! LoadingCollectionViewCell
-            cell.startLoading()
-            return cell
+
+    private func applySnapshot(news: [News]) {
+        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+        
+        snapshot.appendSections([.newsSection])
+        snapshot.appendItems(news.map { Item.news($0) }, toSection: .newsSection)
+        
+        if isLoading {
+            snapshot.appendSections([.loadingSection])
+            snapshot.appendItems([.loading], toSection: .loadingSection)
         }
         
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: NewsListCollectionViewCell.indentifier, for: indexPath) as! NewsListCollectionViewCell
-        cell.backgroundColor = .systemGray6
-        let data = viewModel.news[indexPath.row]
-        cell.configure(news: data)
-        return cell
+        dataSource.apply(snapshot, animatingDifferences: true)
     }
-    
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let news = viewModel.news[indexPath.row]
-        viewModel.pushToDetail(news.url)
-    }
-    
+}
+
+extension NewsListController: UICollectionViewDelegate {
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         let offset = scrollView.contentOffset.y
         let contentHeight = collectionView.contentSize.height
         let height = scrollView.frame.size.height
-        
+
         if offset > contentHeight - height - 100 {
             guard !isLoading else { return }
             isLoading = true
-            collectionView.reloadData()
-            viewModel.fetchNews()
+            applySnapshot(news: viewModel.news)
+
+            Task {
+                do {
+                    try await viewModel.fetchNews()
+                } catch {
+                    isLoading = false
+                    print("Error fetching news: \(error)")
+                }
+            }
         }
     }
+    
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        let news = viewModel.news[indexPath.item]
+        viewModel.pushToDetail(news.url)
+    }
 }
+
+extension NewsListController {
+    enum Section {
+        case newsSection
+        case loadingSection
+    }
+
+    enum Item: Hashable {
+        case news(News)
+        case loading
+    }
+}
+

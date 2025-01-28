@@ -17,39 +17,49 @@ final class NewsListViewModel: ObservableObject {
     private let apiService = NewsAPI()
     private var page = 0
     
-    func fetchNews() {
-        let dispatchGroup = DispatchGroup()
-        
+    func fetchNews() async throws {
         page += 1
-        apiService.fetchNews(page: page).sink { error in
-            print(error)
-        } receiveValue: { [weak self] newsList in
-            var news: [News] = []
+           
+            let newsList = try await apiService.fetchNews(page: page)
             
-            for newsL in newsList.news {
-                dispatchGroup.enter()
-                self?.fetchImage(url: newsL.titleImageUrl) { image in
-                    news.append(News(image: image, title: newsL.title, description: newsL.description, time: newsL.publishedDate, url: newsL.fullUrl))
-                    dispatchGroup.leave()
+            let newsData: [News] = try await withThrowingTaskGroup(of: News.self) { group in
+                for newsL in newsList.news {
+                    group.addTask {
+                        let imageNews = await self.fetchImage(url: newsL.titleImageUrl)
+                        
+                        return News(
+                            image: imageNews,
+                            title: newsL.title,
+                            description: newsL.description,
+                            time: newsL.publishedDate,
+                            url: newsL.fullUrl
+                        )
+                    }
                 }
+                
+                var results: [News] = []
+                for try await newsItem in group {
+                    results.append(newsItem)
+                }
+                return results
             }
             
-            dispatchGroup.notify(queue: .main) {
-                news.sort { $0.time > $1.time }
-                self?.news.append(contentsOf: news)
-            }
+            let sortedNewsData = newsData.sorted { $0.time > $1.time }
             
-        }
-        .store(in: &cancellables)
+            await MainActor.run {
+                self.news.append(contentsOf: sortedNewsData)
+            }
     }
     
-    func fetchImage(url: String, completion: @escaping (UIImage) -> Void) {
-        apiService.fetchImage(url: url)
-            .sink { error in
-            print(error)
-        } receiveValue: {data in
-            completion(UIImage(data: data) ?? UIImage())
-        }.store(in: &cancellables)
+    func fetchImage(url: String) async -> UIImage {
+        
+        do {
+            let dataImage = try await apiService.downloadImage(from: url)
+            return UIImage(data: dataImage)!
+        } catch {
+            print("error fatch image")
+            return UIImage()
+        }
     }
     
     func pushToDetail(_ url: String) {

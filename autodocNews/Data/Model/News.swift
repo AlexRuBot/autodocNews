@@ -6,7 +6,7 @@
 //
 import UIKit
 
-struct News {
+struct News: Hashable {
     var image: UIImage?
     var title: String
     var description: String
